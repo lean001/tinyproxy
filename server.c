@@ -9,7 +9,7 @@ enum REG_STATE{
 };
 
 typedef struct _s_contact{
-    int hash;
+    unsigned int hash;
     int fd;
     str server_id;
     enum REG_STATE state;
@@ -23,34 +23,59 @@ typedef struct _s_contact{
 }s_contact;
 
 typedef struct {
-    s_contact *table;
-    int count;
+    s_contact *head;
+    s_contact *tail;
+    gen_lock_t *lock;
 }s_hash_slot;
 
+s_hash_slot *s_contact_table = NULL;
+int s_hash_size = DEFAULT_SERVER_HASH_SIZE;
 
-s_hash_slot s_contact_hash = {NULL, 0};
-int r_hash_size = DEFAULT_SERVER_HASH_SIZE;
-
-int s_contact_hash_init(int size)
+int s_contact_table_init(int size)
 {
-    r_hash_size = size;
-    if(r_hash_size <= 0)
-        r_hash_size = DEFAULT_SERVER_HASH_SIZE;
+    s_hash_size = size;
+    if(s_hash_size <= 0)
+        s_hash_size = DEFAULT_SERVER_HASH_SIZE;
     
-    s_contact_hash.table = (s_contact *)PxyMalloc(sizeof(s_contact) * r_hash_size);
-    if(!s_contact_hash.table) return -1;
+    s_contact_table = (s_hash_slot *)PxyMalloc(sizeof(s_hash_slot) * s_hash_size);
+    if(!s_contact_table) return -1;
+    memset(s_contact_table, 0, sizeof(s_hash_slot) * s_hash_size);
     
-    memset(s_contact_hash.table, 0, sizeof(s_contact) * r_hash_size);
-    s_contact_hash.count = 0;
+    
+    for(i = 0; i < s_hash_size; i++){
+        s_contact_table[i].lock = lock_alloc();
+        if(!s_contact_table[i].lock){
+            proxy_log(L_ERR, "%s failed to alloc lock hash=%d\n", __func__, i);
+            return -1;
+        }
+        s_contact_table[i].lock = lock_init(s_contact_table[i].lock);
+    }
     
     return 0;
 }
-void s_contact_hash_destroy()
+
+void s_contact_table_destroy()
 {
+    unsigned int i;
+    s_contact *c, *nc;
     
+    if(!s_contact_table)return;
+    
+    for(i = 0; i < s_hash_size; i++){
+        s_lock(i);
+        c = s_contact_table[i].head;
+        while(c){
+            nc = c->next;
+            s_contact_free(c);
+            c = nc;
+        }
+        s_unlock(i);
+        s_dealloc(s_contact_table[i].lock);
+    }
+    PxyFree(s_contact_table);
 }
 
-inline unsigned int get_s_contact_hash(str host, int port, int hash_size)
+static inline unsigned int s_contact_hash_get(str host, int port, int hash_size)
 {
    #define h_inc h+=v^(v>>3)
    char* p;
@@ -76,7 +101,7 @@ inline unsigned int get_s_contact_hash(str host, int port, int hash_size)
 #undef h_inc 
 }
 
-s_contact* s_contact_new(int fd, str host, int port)
+static s_contact* s_contact_new(int fd, str host, int port)
 {
     s_contact* c = NULL;
     
@@ -91,7 +116,7 @@ s_contact* s_contact_new(int fd, str host, int port)
     STR_DUP(c->host, host, "s_contact_new");
     c->fd = fd;
     c->port = port;
-    c->hash = get_s_contact_hash(c->host, c->port, r_hash_size);
+    c->hash = s_contact_hash_get(c->host, c->port, s_hash_size);
     c->state = NOT_REG;
     return c;
     
@@ -102,9 +127,108 @@ oom:
     return NULL;
 }
 
+static void s_contact_free(s_contact *c)
+{
+    if(NULL == c)return;
+    
+    if(c->host.s) PxyFree(c->host.s);
+    if(c->server_id.s) PxyFree(c->server_id.s);
+    if(c->name.s) PxyFree(c->name.s);
+    
+    PxyFree(c);
+}
+
+s_contact* s_contact_add(int fd, str host, int port)
+{
+    s_contact *c = NULL;
+    
+    if(!s_contact_table)return NULL;
+    c = s_contact_new(fd, host, port);
+    if(NULL == c) return NULL;
+    c->next = NULL;
+    
+    unsigned int hash = c->hash;
+    s_lock(hash);
+    c->prev = s_contact_table[hash].tail;
+    if(c->prev) c->prev->next = c;
+    s_contact_table[hash].tail = c;
+    if(!s_contact_table[hash].head) s_contact_table[hash].head = c;
+    
+    return c;
+}
+
+void s_contact_del(s_contact *c)
+{
+    unsigned int hash = c->hash;
+    
+    s_drop_all_dialogs(c->server_id);
+    
+    if(s_contact_table[hash]->head == c) s_contact_table[hash]->head = c->next;
+    else c->prev->next = c->next;
+    
+    if(s_contact_table[hash]->tail == c) s_contact_table[hash]->tail == c->prev;
+    else c->next->prev = c->prev;
+    
+    s_contact_free(c);
+}
+
+s_contact* s_contact_get(str host, int port)
+{
+    s_contact *c;
+    
+    if(!s_contact_table) return NULL;
+    unsigned int hash = s_contact_hash_get(host, port, s_hash_size);
+
+    s_lock(hash);
+    c = s_contact_table[hash].head;
+    while(c){
+        if(c->port == port && 
+            c->host.len == host.len &&
+            strncasecmp(c->host.s, host.s, host.len) == 0)
+            return c;
+        c = c>next;
+    }
+    s_unlock(hash);
+    return NULL;
+}
+
+
+s_contact* s_contact_update(str host, int port, int fd, str *id, str *name, enum REG_STATE *state)
+{
+    s_contact *c = NULL;
+    
+    c = s_contact_get(host, port);
+    
+    if(!c){
+            c = s_contact_add(fd, host, port);
+            if(!c) return NULL;
+            
+            if(id){
+                if(c->server_id.s) PxyFree(c->server_id.s);
+                STR_DUP(c->server_id, *id, "s_contact_update() server_id"); 
+            }
+            
+            if(name){
+                if(c->name.s) PxyFree(c->name.s);
+                STR_DUP(c->name, *name, "s_contact_update() name"); 
+            }
+            
+            c->state = NOT_REG;
+    }else{
+        if(state && *state != NOT_REG){
+            c->state = *state;
+        }else{
+            proxy_log(L_WARN, "update contact with NO state!");
+            return NULL;
+        }
+    }
+    return c;
+oom:
+    proxy_log(L_ERR, "s_contact_update() some contacts might have not been updated!");
+    return c;
+}
 /* server register setup */
-void
-server_reg_setup(evutil_socket_t fd,
+void server_reg_setup(evutil_socket_t fd,
                struct sockaddr *peeraddr, int peeraddrlen,
                pxy_thrmgr_ctx_t *thrmgr,
                proxyspec_t *spec, opts_t *opts)
