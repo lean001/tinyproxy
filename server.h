@@ -12,8 +12,8 @@
 
 #define DEFAULT_SERVER_HASH_SIZE 128
 
-int s_contact_hash_init(int);
-void s_contact_hash_destroy();
+int s_contact_table_init(int);
+void s_contact_table_destroy();
 
 void server_reg_setup(evutil_socket_t, struct sockaddr *, int,
                     pxy_thrmgr_ctx_t *, proxyspec_t *, opts_t *);

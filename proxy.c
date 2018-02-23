@@ -59,12 +59,12 @@
 static int signals[] = { SIGQUIT, SIGHUP, SIGINT, SIGPIPE, SIGUSR1 };
 
 struct proxy_ctx {
-	pxy_thrmgr_ctx_t *thrmgr;
-	struct event_base *evbase;
-	struct event *sev[sizeof(signals)/sizeof(int)];
-	struct event *gcev;
-	struct proxy_listener_ctx *lctx;
-	opts_t *opts;
+    pxy_thrmgr_ctx_t *thrmgr;
+    struct event_base *evbase;
+    struct event *sev[sizeof(signals)/sizeof(int)];
+    struct event *gcev;
+    struct proxy_listener_ctx *lctx;
+    opts_t *opts;
 };
 
 
@@ -72,11 +72,11 @@ struct proxy_ctx {
  * Listener context.
  */
 typedef struct proxy_listener_ctx {
-	pxy_thrmgr_ctx_t *thrmgr;
-	proxyspec_t *spec;
-	opts_t *opts;
-	struct evconnlistener *evcl;
-	struct proxy_listener_ctx *next;
+    pxy_thrmgr_ctx_t *thrmgr;
+    proxyspec_t *spec;
+    opts_t *opts;
+    struct evconnlistener *evcl;
+    struct proxy_listener_ctx *next;
 } proxy_listener_ctx_t;
 
 
@@ -84,26 +84,26 @@ static proxy_listener_ctx_t *
 proxy_listener_ctx_new(pxy_thrmgr_ctx_t *thrmgr, proxyspec_t *spec,
                        opts_t *opts)
 {
-	proxy_listener_ctx_t *ctx = malloc(sizeof(proxy_listener_ctx_t));
-	if (!ctx)
-		return NULL;
-	memset(ctx, 0, sizeof(proxy_listener_ctx_t));
-	ctx->thrmgr = thrmgr;
-	ctx->spec = spec;
-	ctx->opts = opts;
-	return ctx;
+    proxy_listener_ctx_t *ctx = malloc(sizeof(proxy_listener_ctx_t));
+    if (!ctx)
+        return NULL;
+    memset(ctx, 0, sizeof(proxy_listener_ctx_t));
+    ctx->thrmgr = thrmgr;
+    ctx->spec = spec;
+    ctx->opts = opts;
+    return ctx;
 }
 
 static void
 proxy_listener_ctx_free(proxy_listener_ctx_t *ctx)
 {
-	if (ctx->evcl) {
-		evconnlistener_free(ctx->evcl);
-	}
-	if (ctx->next) {
-		proxy_listener_ctx_free(ctx->next);
-	}
-	free(ctx);
+    if (ctx->evcl) {
+        evconnlistener_free(ctx->evcl);
+    }
+    if (ctx->next) {
+        proxy_listener_ctx_free(ctx->next);
+    }
+    free(ctx);
 }
 
 /*
@@ -115,10 +115,10 @@ proxy_listener_acceptcb(UNUSED struct evconnlistener *listener,
                         struct sockaddr *peeraddr, int peeraddrlen,
                         void *arg)
 {
-	proxy_listener_ctx_t *cfg = arg;
+    proxy_listener_ctx_t *cfg = arg;
 
-	server_reg_setup(fd, peeraddr, peeraddrlen, cfg->thrmgr,
-	               cfg->spec, cfg->opts);
+    server_reg_setup(fd, peeraddr, peeraddrlen, cfg->thrmgr,
+                   cfg->spec, cfg->opts);
 }
 
 /*
@@ -127,11 +127,11 @@ proxy_listener_acceptcb(UNUSED struct evconnlistener *listener,
 static void
 proxy_listener_errorcb(struct evconnlistener *listener, UNUSED void *ctx)
 {
-	struct event_base *evbase = evconnlistener_get_base(listener);
-	int err = EVUTIL_SOCKET_ERROR();
-	log_err_printf("Error %d on listener: %s\n", err,
-	               evutil_socket_error_to_string(err));
-	event_base_loopbreak(evbase);
+    struct event_base *evbase = evconnlistener_get_base(listener);
+    int err = EVUTIL_SOCKET_ERROR();
+    log_err_printf("Error %d on listener: %s\n", err,
+                   evutil_socket_error_to_string(err));
+    event_base_loopbreak(evbase);
 }
 
 /*
@@ -140,15 +140,15 @@ proxy_listener_errorcb(struct evconnlistener *listener, UNUSED void *ctx)
 static void
 proxy_debug_base(const struct event_base *ev_base)
 {
-	log_dbg_printf("Using libevent backend '%s'\n",
-	               event_base_get_method(ev_base));
+    log_dbg_printf("Using libevent backend '%s'\n",
+                   event_base_get_method(ev_base));
 
-	enum event_method_feature f;
-	f = event_base_get_features(ev_base);
-	log_dbg_printf("Event base supports: edge %s, O(1) %s, anyfd %s\n",
-	               ((f & EV_FEATURE_ET) ? "yes" : "no"),
-	               ((f & EV_FEATURE_O1) ? "yes" : "no"),
-	               ((f & EV_FEATURE_FDS) ? "yes" : "no"));
+    enum event_method_feature f;
+    f = event_base_get_features(ev_base);
+    log_dbg_printf("Event base supports: edge %s, O(1) %s, anyfd %s\n",
+                   ((f & EV_FEATURE_ET) ? "yes" : "no"),
+                   ((f & EV_FEATURE_O1) ? "yes" : "no"),
+                   ((f & EV_FEATURE_FDS) ? "yes" : "no"));
 }
 
 /*
@@ -159,33 +159,33 @@ static proxy_listener_ctx_t *
 proxy_listener_setup(struct event_base *evbase, pxy_thrmgr_ctx_t *thrmgr,
                      proxyspec_t *spec, opts_t *opts, int clisock)
 {
-	proxy_listener_ctx_t *plc;
-	int fd;
+    proxy_listener_ctx_t *plc;
+    int fd;
 
-	if ((fd = privsep_client_opensock(clisock, spec)) == -1) {
-		log_err_printf("Error opening socket: %s (%i)\n",
-		               strerror(errno), errno);
-		return NULL;
-	}
+    if ((fd = privsep_client_opensock(clisock, spec)) == -1) {
+        log_err_printf("Error opening socket: %s (%i)\n",
+                       strerror(errno), errno);
+        return NULL;
+    }
 
-	plc = proxy_listener_ctx_new(thrmgr, spec, opts);
-	if (!plc) {
-		log_err_printf("Error creating listener context\n");
-		evutil_closesocket(fd);
-		return NULL;
-	}
+    plc = proxy_listener_ctx_new(thrmgr, spec, opts);
+    if (!plc) {
+        log_err_printf("Error creating listener context\n");
+        evutil_closesocket(fd);
+        return NULL;
+    }
 
-	plc->evcl = evconnlistener_new(evbase, proxy_listener_acceptcb,
-	                               plc, LEV_OPT_CLOSE_ON_FREE, 1024, fd);
-	if (!plc->evcl) {
-		log_err_printf("Error creating evconnlistener: %s\n",
-		               strerror(errno));
-		proxy_listener_ctx_free(plc);
-		evutil_closesocket(fd);
-		return NULL;
-	}
-	evconnlistener_set_error_cb(plc->evcl, proxy_listener_errorcb);
-	return plc;
+    plc->evcl = evconnlistener_new(evbase, proxy_listener_acceptcb,
+                                   plc, LEV_OPT_CLOSE_ON_FREE, 1024, fd);
+    if (!plc->evcl) {
+        log_err_printf("Error creating evconnlistener: %s\n",
+                       strerror(errno));
+        proxy_listener_ctx_free(plc);
+        evutil_closesocket(fd);
+        return NULL;
+    }
+    evconnlistener_set_error_cb(plc->evcl, proxy_listener_errorcb);
+    return plc;
 }
 
 /*
@@ -194,32 +194,32 @@ proxy_listener_setup(struct event_base *evbase, pxy_thrmgr_ctx_t *thrmgr,
 static void
 proxy_signal_cb(evutil_socket_t fd, UNUSED short what, void *arg)
 {
-	proxy_ctx_t *ctx = arg;
+    proxy_ctx_t *ctx = arg;
 
-	if (OPTS_DEBUG(ctx->opts)) {
-		log_dbg_printf("Received signal %i\n", fd);
-	}
+    if (OPTS_DEBUG(ctx->opts)) {
+        log_dbg_printf("Received signal %i\n", fd);
+    }
 
-	switch(fd) {
-	case SIGQUIT:
-	case SIGINT:
-	case SIGHUP:
-		proxy_loopbreak(ctx);
-		break;
-	case SIGUSR1:
-		if (log_reopen() == -1) {
-			log_err_printf("Warning: Failed to reopen logs\n");
-		} else {
-			log_dbg_printf("Reopened log files\n");
-		}
-		break;
-	case SIGPIPE:
-		log_err_printf("Warning: Received SIGPIPE; ignoring.\n");
-		break;
-	default:
-		log_err_printf("Warning: Received unexpected signal %i\n", fd);
-		break;
-	}
+    switch(fd) {
+    case SIGQUIT:
+    case SIGINT:
+    case SIGHUP:
+        proxy_loopbreak(ctx);
+        break;
+    case SIGUSR1:
+        if (log_reopen() == -1) {
+            log_err_printf("Warning: Failed to reopen logs\n");
+        } else {
+            log_dbg_printf("Reopened log files\n");
+        }
+        break;
+    case SIGPIPE:
+        log_err_printf("Warning: Received SIGPIPE; ignoring.\n");
+        break;
+    default:
+        log_err_printf("Warning: Received unexpected signal %i\n", fd);
+        break;
+    }
 }
 
 /*
@@ -228,15 +228,15 @@ proxy_signal_cb(evutil_socket_t fd, UNUSED short what, void *arg)
 static void
 proxy_gc_cb(UNUSED evutil_socket_t fd, UNUSED short what, void *arg)
 {
-	proxy_ctx_t *ctx = arg;
+    proxy_ctx_t *ctx = arg;
 
-	if (OPTS_DEBUG(ctx->opts))
-		log_dbg_printf("Garbage collecting caches started.\n");
+    if (OPTS_DEBUG(ctx->opts))
+        log_dbg_printf("Garbage collecting caches started.\n");
 
-	cachemgr_gc();
+    cachemgr_gc();
 
-	if (OPTS_DEBUG(ctx->opts))
-		log_dbg_printf("Garbage collecting caches done.\n");
+    if (OPTS_DEBUG(ctx->opts))
+        log_dbg_printf("Garbage collecting caches done.\n");
 }
 
 /*
@@ -247,123 +247,123 @@ proxy_gc_cb(UNUSED evutil_socket_t fd, UNUSED short what, void *arg)
 proxy_ctx_t *
 proxy_new(opts_t *opts, int clisock)
 {
-	proxy_listener_ctx_t *head;
-	proxy_ctx_t *ctx;
-	struct evdns_base *dnsbase;
-	int rc;
+    proxy_listener_ctx_t *head;
+    proxy_ctx_t *ctx;
+    struct evdns_base *dnsbase;
+    int rc;
 
-	/* adds locking, only required if accessed from separate threads */
-	evthread_use_pthreads();
+    /* adds locking, only required if accessed from separate threads */
+    evthread_use_pthreads();
 
-#ifndef PURIFY
-	if (OPTS_DEBUG(opts)) {
-		event_enable_debug_mode();
-	}
-#endif /* PURIFY */
+    #ifndef PURIFY
+    if (OPTS_DEBUG(opts)) {
+        event_enable_debug_mode();
+    }
+    #endif /* PURIFY */
 
-	ctx = malloc(sizeof(proxy_ctx_t));
-	if (!ctx) {
-		log_err_printf("Error allocating memory\n");
-		goto leave0;
-	}
-	memset(ctx, 0, sizeof(proxy_ctx_t));
+    ctx = malloc(sizeof(proxy_ctx_t));
+    if (!ctx) {
+        log_err_printf("Error allocating memory\n");
+        goto leave0;
+    }
+    memset(ctx, 0, sizeof(proxy_ctx_t));
 
-	ctx->opts = opts;
-	struct event_config *cfg = event_config_new();
+    ctx->opts = opts;
+    struct event_config *cfg = event_config_new();
 
-	event_config_avoid_method(cfg, "epoll");
+    event_config_avoid_method(cfg, "epoll");
 
-	ctx->evbase = event_base_new_with_config(cfg); 
-	//ctx->evbase = event_base_new();
-	if (!ctx->evbase) {
-		log_err_printf("Error getting event base\n");
-		goto leave1;
-	}
+    ctx->evbase = event_base_new_with_config(cfg); 
+    //ctx->evbase = event_base_new();
+    if (!ctx->evbase) {
+        log_err_printf("Error getting event base\n");
+        goto leave1;
+    }
 
-	if (opts_has_dns_spec(opts)) {
-		/* create a dnsbase here purely for being able to test parsing
-		 * resolv.conf while we can still alert the user about it. */
-		dnsbase = evdns_base_new(ctx->evbase, 0);
-		if (!dnsbase) {
-			log_err_printf("Error creating dns event base\n");
-			goto leave1b;
-		}
-		rc = evdns_base_resolv_conf_parse(dnsbase, DNS_OPTIONS_ALL,
-		                                  "/etc/resolv.conf");
-		evdns_base_free(dnsbase, 0);
-		if (rc != 0) {
-			log_err_printf("evdns cannot parse resolv.conf: "
-			               "%s (%d)\n",
-			               rc == 1 ? "failed to open file" :
-			               rc == 2 ? "failed to stat file" :
-			               rc == 3 ? "file too large" :
-			               rc == 4 ? "out of memory" :
-			               rc == 5 ? "short read from file" :
-			               rc == 6 ? "no nameservers in file" :
-			               "unknown error", rc);
-			goto leave1b;
-		}
-	}
+    if (opts_has_dns_spec(opts)) {
+        /* create a dnsbase here purely for being able to test parsing
+         * resolv.conf while we can still alert the user about it. */
+        dnsbase = evdns_base_new(ctx->evbase, 0);
+        if (!dnsbase) {
+            log_err_printf("Error creating dns event base\n");
+            goto leave1b;
+        }
+        rc = evdns_base_resolv_conf_parse(dnsbase, DNS_OPTIONS_ALL,
+                                          "/etc/resolv.conf");
+        evdns_base_free(dnsbase, 0);
+        if (rc != 0) {
+            log_err_printf("evdns cannot parse resolv.conf: "
+                           "%s (%d)\n",
+                           rc == 1 ? "failed to open file" :
+                           rc == 2 ? "failed to stat file" :
+                           rc == 3 ? "file too large" :
+                           rc == 4 ? "out of memory" :
+                           rc == 5 ? "short read from file" :
+                           rc == 6 ? "no nameservers in file" :
+                           "unknown error", rc);
+            goto leave1b;
+        }
+    }
 
-	if (OPTS_DEBUG(opts)) {
-		proxy_debug_base(ctx->evbase);
-	}
+    if (OPTS_DEBUG(opts)) {
+        proxy_debug_base(ctx->evbase);
+    }
 
-	ctx->thrmgr = pxy_thrmgr_new(opts);
-	if (!ctx->thrmgr) {
-		log_err_printf("Error creating thread manager\n");
-		goto leave1b;
-	}
+    ctx->thrmgr = pxy_thrmgr_new(opts);
+    if (!ctx->thrmgr) {
+        log_err_printf("Error creating thread manager\n");
+        goto leave1b;
+    }
 
-	head = ctx->lctx = NULL;
-	for (proxyspec_t *spec = opts->spec; spec; spec = spec->next) {
-		head = proxy_listener_setup(ctx->evbase, ctx->thrmgr,
-		                            spec, opts, clisock);
-		if (!head)
-			goto leave2;
-		head->next = ctx->lctx;
-		ctx->lctx = head;
-	}
+    head = ctx->lctx = NULL;
+    for (proxyspec_t *spec = opts->spec; spec; spec = spec->next) {
+        head = proxy_listener_setup(ctx->evbase, ctx->thrmgr,
+                                    spec, opts, clisock);
+        if (!head)
+            goto leave2;
+        head->next = ctx->lctx;
+        ctx->lctx = head;
+    }
 
-	for (size_t i = 0; i < (sizeof(signals) / sizeof(int)); i++) {
-		ctx->sev[i] = evsignal_new(ctx->evbase, signals[i],
-		                           proxy_signal_cb, ctx);
-		if (!ctx->sev[i])
-			goto leave3;
-		evsignal_add(ctx->sev[i], NULL);
-	}
+    for (size_t i = 0; i < (sizeof(signals) / sizeof(int)); i++) {
+        ctx->sev[i] = evsignal_new(ctx->evbase, signals[i],
+                                   proxy_signal_cb, ctx);
+        if (!ctx->sev[i])
+            goto leave3;
+        evsignal_add(ctx->sev[i], NULL);
+    }
 
-	struct timeval gc_delay = {60, 0};
-	ctx->gcev = event_new(ctx->evbase, -1, EV_PERSIST, proxy_gc_cb, ctx);
-	if (!ctx->gcev)
-		goto leave4;
-	evtimer_add(ctx->gcev, &gc_delay);
+    struct timeval gc_delay = {60, 0};
+    ctx->gcev = event_new(ctx->evbase, -1, EV_PERSIST, proxy_gc_cb, ctx);
+    if (!ctx->gcev)
+        goto leave4;
+    evtimer_add(ctx->gcev, &gc_delay);
 
-	privsep_client_close(clisock);
-	return ctx;
+    privsep_client_close(clisock);
+    return ctx;
 
-leave4:
-	if (ctx->gcev) {
-		event_free(ctx->gcev);
-	}
+    leave4:
+    if (ctx->gcev) {
+        event_free(ctx->gcev);
+    }
 
-leave3:
-	for (size_t i = 0; i < (sizeof(ctx->sev) / sizeof(ctx->sev[0])); i++) {
-		if (ctx->sev[i]) {
-			event_free(ctx->sev[i]);
-		}
-	}
-leave2:
-	if (ctx->lctx) {
-		proxy_listener_ctx_free(ctx->lctx);
-	}
-	pxy_thrmgr_free(ctx->thrmgr);
-leave1b:
-	event_base_free(ctx->evbase);
-leave1:
-	free(ctx);
-leave0:
-	return NULL;
+    leave3:
+    for (size_t i = 0; i < (sizeof(ctx->sev) / sizeof(ctx->sev[0])); i++) {
+        if (ctx->sev[i]) {
+            event_free(ctx->sev[i]);
+        }
+    }
+    leave2:
+    if (ctx->lctx) {
+        proxy_listener_ctx_free(ctx->lctx);
+    }
+    pxy_thrmgr_free(ctx->thrmgr);
+    leave1b:
+    event_base_free(ctx->evbase);
+    leave1:
+    free(ctx);
+    leave0:
+    return NULL;
 }
 
 /*
@@ -373,25 +373,25 @@ leave0:
 void
 proxy_run(proxy_ctx_t *ctx)
 {
-	if (ctx->opts->detach) {
-		event_reinit(ctx->evbase);
-	}
-#ifndef PURIFY
-	if (OPTS_DEBUG(ctx->opts)) {
-		event_base_dump_events(ctx->evbase, stderr);
-	}
-#endif /* PURIFY */
-	if (pxy_thrmgr_run(ctx->thrmgr) == -1) {
-		log_err_printf("Failed to start thread manager\n");
-		return;
-	}
-	if (OPTS_DEBUG(ctx->opts)) {
-		log_dbg_printf("Starting main event loop.\n");
-	}
-	event_base_dispatch(ctx->evbase);
-	if (OPTS_DEBUG(ctx->opts)) {
-		log_dbg_printf("Main event loop stopped.\n");
-	}
+    if (ctx->opts->detach) {
+        event_reinit(ctx->evbase);
+    }
+    #ifndef PURIFY
+    if (OPTS_DEBUG(ctx->opts)) {
+        event_base_dump_events(ctx->evbase, stderr);
+    }
+    #endif /* PURIFY */
+    if (pxy_thrmgr_run(ctx->thrmgr) == -1) {
+        log_err_printf("Failed to start thread manager\n");
+        return;
+    }
+    if (OPTS_DEBUG(ctx->opts)) {
+        log_dbg_printf("Starting main event loop.\n");
+    }
+    event_base_dispatch(ctx->evbase);
+    if (OPTS_DEBUG(ctx->opts)) {
+        log_dbg_printf("Main event loop stopped.\n");
+    }
 }
 
 /*

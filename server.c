@@ -1,5 +1,6 @@
 #include "server.h"
-#include ""util-mem.h
+#include "util-mem.h"
+#include "util-lock.h"
 
 enum REG_STATE{
     NOT_REG = 0,
@@ -7,6 +8,13 @@ enum REG_STATE{
     REGISTERED,
     DEREGISTERED
 };
+
+typedef struct _capability{
+    str id;
+    str description;
+    unsigned int level;
+    struct _capability *next;
+}capability_t;
 
 typedef struct _s_contact{
     unsigned int hash;
@@ -17,12 +25,12 @@ typedef struct _s_contact{
     unsigned short port;
     str name;
     //time_t expires;
-    
+    capability_t *capabilities;
     struct _s_contact *next;
     struct _s_contact *prev;
 }s_contact;
 
-typedef struct {
+typedef struct _s_hash_slot{
     s_contact *head;
     s_contact *tail;
     gen_lock_t *lock;
@@ -30,6 +38,48 @@ typedef struct {
 
 s_hash_slot *s_contact_table = NULL;
 int s_hash_size = DEFAULT_SERVER_HASH_SIZE;
+
+
+inline void s_lock(unsigned int hash)
+{
+    lock_get(s_contact_table[(hash)].lock);
+}
+
+inline void s_unlock(unsigned int hash)
+{
+    lock_release(s_contact_table[(hash)].lock);
+}
+
+capability_t * s_capability_find(capability_t *capabilities, str id)
+{
+    capability_t *s;
+    s = capabilities;
+    while(s){
+        if(s->id.len == id.len && strncasecmp(s->id.s, id.s, id.len) == 0)
+            return s;
+        s = s->next;
+    }
+    return NULL;
+}
+
+static void s_capability_free(capability_t *c)
+{
+    if(!c)return;
+    if(c->id.s) PxyFree(c->id.s);
+    if(c->description.s) PxyFree(c->description.s);
+    PxyFree(c);
+}
+
+static void s_capability_destroy(capability_t *s)
+{
+    capability_t *tmp;
+    
+    while(s){
+        tmp = s->next;
+        s_capability_free(s);
+        s = tmp;
+    }
+}
 
 int s_contact_table_init(int size)
 {
@@ -70,12 +120,12 @@ void s_contact_table_destroy()
             c = nc;
         }
         s_unlock(i);
-        s_dealloc(s_contact_table[i].lock);
+        lock_dealloc(s_contact_table[i].lock);
     }
     PxyFree(s_contact_table);
 }
 
-static inline unsigned int s_contact_hash_get(str host, int port, int hash_size)
+inline static unsigned int s_contact_hash_get(str host, int port, int hash_size)
 {
    #define h_inc h+=v^(v>>3)
    char* p;
@@ -118,8 +168,8 @@ static s_contact* s_contact_new(int fd, str host, int port)
     c->port = port;
     c->hash = s_contact_hash_get(c->host, c->port, s_hash_size);
     c->state = NOT_REG;
+
     return c;
-    
 oom:
     if(c){
         PxyFree(c);
@@ -166,7 +216,8 @@ void s_contact_del(s_contact *c)
     if(s_contact_table[hash]->head == c) s_contact_table[hash]->head = c->next;
     else c->prev->next = c->next;
     
-    if(s_contact_table[hash]->tail == c) s_contact_table[hash]->tail == c->prev;
+    if(s_contact_table[hash]->tail == c) 
+        s_contact_table[hash]->tail = c->prev;
     else c->next->prev = c->prev;
     
     s_contact_free(c);
@@ -183,40 +234,57 @@ s_contact* s_contact_get(str host, int port)
     c = s_contact_table[hash].head;
     while(c){
         if(c->port == port && 
-            c->host.len == host.len &&
-            strncasecmp(c->host.s, host.s, host.len) == 0)
+           c->host.len == host.len &&
+           strncasecmp(c->host.s, host.s, host.len) == 0)
             return c;
-        c = c>next;
+        c = c->next;
     }
     s_unlock(hash);
     return NULL;
 }
 
-
-s_contact* s_contact_update(str host, int port, int fd, str *id, str *name, enum REG_STATE *state)
+/*
+* Update s_contact with the reg_state and capabilities, if not found , will be inserted.
+* Note: will be lock on slot if success, so release it when you done.
+* capabilities: the list of capability that the server supported, send nofify if updated success
+*/
+s_contact* s_contact_update(str host, int port, int fd, str *id, str *name, 
+    enum REG_STATE *state, capability_t *capabilities)
 {
     s_contact *c = NULL;
     
     c = s_contact_get(host, port);
     
     if(!c){
-            c = s_contact_add(fd, host, port);
-            if(!c) return NULL;
-            
-            if(id){
-                if(c->server_id.s) PxyFree(c->server_id.s);
-                STR_DUP(c->server_id, *id, "s_contact_update() server_id"); 
-            }
-            
-            if(name){
-                if(c->name.s) PxyFree(c->name.s);
-                STR_DUP(c->name, *name, "s_contact_update() name"); 
-            }
-            
-            c->state = NOT_REG;
+        c = s_contact_add(fd, host, port);
+        if(!c) return NULL;
+        
+        if(id){
+            if(c->server_id.s) PxyFree(c->server_id.s);
+            STR_DUP(c->server_id, *id, "s_contact_update() server_id"); 
+        }
+        
+        if(name){
+            if(c->name.s) PxyFree(c->name.s);
+            STR_DUP(c->name, *name, "s_contact_update() name"); 
+        }
+        
+        if(capabilities){
+            c->capabilities = capabilities;
+        }
+        
+        c->state = NOT_REG;
     }else{
         if(state && *state != NOT_REG){
             c->state = *state;
+            
+            if(capabilities){
+                if(!c->capabilities)c->capabilities = capabilities;
+                else{ /* notify clients if need */
+                    s_capability_destroy(c->capabilities);
+                    c->capabilities = capabilities;
+                }
+            }
         }else{
             proxy_log(L_WARN, "update contact with NO state!");
             return NULL;
@@ -227,6 +295,7 @@ oom:
     proxy_log(L_ERR, "s_contact_update() some contacts might have not been updated!");
     return c;
 }
+
 /* server register setup */
 void server_reg_setup(evutil_socket_t fd,
                struct sockaddr *peeraddr, int peeraddrlen,
