@@ -117,7 +117,7 @@ proxy_listener_acceptcb(UNUSED struct evconnlistener *listener,
 {
     proxy_listener_ctx_t *cfg = arg;
 
-    server_reg_setup(fd, peeraddr, peeraddrlen, cfg->thrmgr,
+    server_login_setup(fd, peeraddr, peeraddrlen, cfg->thrmgr,
                    cfg->spec, cfg->opts);
 }
 

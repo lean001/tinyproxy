@@ -1,6 +1,7 @@
 #include "server.h"
 #include "util-mem.h"
 #include "util-lock.h"
+#include "common.h"
 
 enum REG_STATE{
     NOT_REG = 0,
@@ -188,7 +189,7 @@ static void s_contact_free(s_contact *c)
     PxyFree(c);
 }
 
-s_contact* s_contact_add(int fd, str host, int port)
+static s_contact* s_contact_add(int fd, str host, int port)
 {
     s_contact *c = NULL;
     
@@ -254,7 +255,6 @@ s_contact* s_contact_update(str host, int port, int fd, str *id, str *name,
     s_contact *c = NULL;
     
     c = s_contact_get(host, port);
-    
     if(!c){
         c = s_contact_add(fd, host, port);
         if(!c) return NULL;
@@ -263,12 +263,10 @@ s_contact* s_contact_update(str host, int port, int fd, str *id, str *name,
             if(c->server_id.s) PxyFree(c->server_id.s);
             STR_DUP(c->server_id, *id, "s_contact_update() server_id"); 
         }
-        
         if(name){
             if(c->name.s) PxyFree(c->name.s);
             STR_DUP(c->name, *name, "s_contact_update() name"); 
         }
-        
         if(capabilities){
             c->capabilities = capabilities;
         }
@@ -287,7 +285,6 @@ s_contact* s_contact_update(str host, int port, int fd, str *id, str *name,
             }
         }else{
             proxy_log(L_WARN, "update contact with NO state!");
-            return NULL;
         }
     }
     return c;
@@ -296,11 +293,115 @@ oom:
     return c;
 }
 
-/* server register setup */
-void server_reg_setup(evutil_socket_t fd,
-               struct sockaddr *peeraddr, int peeraddrlen,
-               pxy_thrmgr_ctx_t *thrmgr,
-               proxyspec_t *spec, opts_t *opts)
+typedef struct _s_conn_ctx{
+    str host;
+    int port;
+    int fd;
+    unsigned int marked : 1;
+    struct event_base *evbase;
+    struct event *ev;
+}s_conn_ctx;
+
+s_conn_ctx* s_conn_ctx_new(int fd, struct event_base *evbase)
 {
+    s_conn_ctx *ctx = NULL;
     
+    BUG_ON(NULL == evbase);
+    
+    ctx = PxyMalloc(sizeof(s_conn_ctx));
+    if(!ctx){
+        proxy_log(L_ERR, "out of memory, alloc %d bytes failed\n", sizeof(s_conn_ctx));
+        return NULL;
+    }
+    memset(ctx, 0, sizeof(s_conn_ctx));
+    ctx->fd = fd;
+    ctx->evbase = evbase;
+    return ctx;
+}
+
+void s_conn_ctx_free(s_conn_ctx *ctx)
+{
+    if(!ctx)return;
+    
+    if(ctx->host.s) PxyFree(ctx->host.s);
+    
+    if (ctx->ev) {
+        event_free(ctx->ev);
+    }
+    
+    PxyFree(ctx);
+}
+
+void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
+{
+    s_conn_ctx *ctx = (s_conn_ctx *)arg;
+    
+    if(!ctx->marked){
+        char buf[1024];
+        ssize_t n;
+        int res;
+        unsigned int complete;
+        
+        n = recv(fd, buf, sizeof(buf), MSG_PEEK);
+        if(n < 0){
+            proxy_log(L_ERR, "error on fd, aboring connnection\n");
+            evutil_closesocket(fd);
+            s_conn_ctx_free(ctx);
+            return;
+        }
+        if(n == 0){
+            proxy_log(L_DBG, "socket closed while waiting msg");
+            evutil_closesocket(fd);
+            s_conn_ctx_free(ctx);
+            return;
+        }
+        #ifdef DEBUG
+        printf("recv: %.*s\n", n, buf);
+        #endif
+        res = server_msg_parse(buf, n, &complete, &servername, &id, &capabilities);
+        if(res == 1 && !complete){/*retry*/
+            struct timeval delay = {0, 100};
+            event_free(ctx->ev);
+            ctx->ev = event_new(ctx->evbase, fd, 0, pxy_fd_readcb, ctx);
+            if(!ctx->ev){
+                perror("[Error] pxy_fd_readcb: Out of memory\n");
+                evutil_closesocket(fd);
+                conn_ctx_free(ctx);
+                return;
+            }
+            event_add(ctx->ev, &delay);
+            return;
+        }
+        event_free(ctx->ev);
+        ctx->ev = NULL;
+    }
+    /*get server info*/
+    s_contact_update(ctx->host, ctx->port, ctx->fd, capabilities);
+}
+
+/* server register setup */
+void server_connect_setup(evutil_socket_t fd,
+               struct sockaddr *peeraddr, int peeraddrlen,
+               pxy_thrmgr_ctx_t *thrmgr, opts_t *opts)
+{
+    s_conn_ctx *ctx = NULL;
+    struct event_base *evbase = (struct event_base *)arg;
+
+    ctx = s_conn_ctx_new(fd, evbase);
+    if(!ctx) goto error;
+    
+    if(addr2str(peeraddr, peeraddrlen, &ctx->host, &ctx->port) != 0) goto error;
+    
+    ctx->ev = event_new(evbase, fd, EV_READ, server_fd_readcb, ctx);
+    if(!ctx->ev){
+        proxy_log(L_ERR, "%s event_new: Out of memory!\n", __func__);
+        goto error;
+    }
+    event_add(ctx->ev, NULL);
+    return;
+    
+error:
+    if(ctx) s_conn_ctx_free(ctx);
+    evutil_closesocket(fd);
+    return;
 }

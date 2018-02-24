@@ -15,7 +15,7 @@
 int s_contact_table_init(int);
 void s_contact_table_destroy();
 
-void server_reg_setup(evutil_socket_t, struct sockaddr *, int,
+void server_connect_setup(evutil_socket_t, struct sockaddr *, int,
                     pxy_thrmgr_ctx_t *, proxyspec_t *, opts_t *);
 
 #endif
