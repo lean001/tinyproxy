@@ -25,7 +25,7 @@ typedef struct _str str;
     }else {\
         (dest).s = PxyMalloc((src).len);\
         if (!(dest).s){\
-            proxy_log(L_ERR,"ERR:"txt": Error allocating %d bytes\n",(src).len);\
+            PxyLog(L_ERR,"ERR:"txt": Error allocating %d bytes\n",(src).len);\
             (dest).len = 0;\
             goto oom;\
         }else{\

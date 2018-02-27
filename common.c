@@ -1,4 +1,6 @@
 #include "common.h"
+#include "util-log.h"
+#include  "util-mem.h"
 
 
 int addr2str(struct sockaddr *addr, int addrlen, str *host, int *port)
@@ -13,7 +15,7 @@ int addr2str(struct sockaddr *addr, int addrlen, str *host, int *port)
                  tmpport, 8,
                  NI_NUMERICHOST | NI_NUMERICSERV);
     if (rv != 0) {
-        proxy_log(L_ERR, "Cannot get nameinfo for socket address: %s\n",
+        PxyLog(L_ERR, "Cannot get nameinfo for socket address: %s\n",
                        gai_strerror(rv));
         return -1;
     }
@@ -21,9 +23,9 @@ int addr2str(struct sockaddr *addr, int addrlen, str *host, int *port)
     *port = atoi(tmpport);
     
     hostsz = strlen(tmphost) + 1; /* including terminator */
-    host->s = malloc(hostsz);
+    host->s = (char *)PxyMalloc(hostsz);
     if (!host->s) {
-        proxy_log("Cannot allocate memory\n");
+        PxyLog(L_ERR, "Cannot allocate memory\n");
         return -1;
     }
     host->len = hostsz;

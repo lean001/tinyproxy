@@ -1,6 +1,10 @@
 #ifndef __UTIL_MEM_H__
+#define __UTIL_MEM_H__
 
-#define PxyMalloc( _size ) _PxyMalloc((_size), \
-        __FILE__, __FUNCTION__, __LINE__ )
+#include <stdlib.h>
+
+#define PxyMalloc( _size ) malloc(_size)
+
+#define PxyFree( p ) free( p )
 
 #endif
