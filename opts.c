@@ -10,6 +10,10 @@ opts_t* opts_new(int argc, char **argv)
     opts_t *p = NULL;
     char ch;
     
+    if(argc < 2){
+        fprintf(stderr, "Usage: %s -h 127.0.0.1 -p 2341\n", argv[0]);
+        return NULL;
+    }
     p = PxyMalloc(sizeof(opts_t));
     if(!p){
         fprintf(stderr, "failed to malloc for opts\n");
@@ -36,9 +40,9 @@ opts_t* opts_new(int argc, char **argv)
             case 'p':
                 p->port = atoi(optarg);
                 break;
-        }
-            
+        }    
     }
+    return p;
     
 }
 void opts_free(opts_t *p)

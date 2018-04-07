@@ -1,10 +1,11 @@
 #include "common.h"
+#include "util-mem.h"
 #include "opts.h"
 #include "middleware.h"
 #include "server.h"
 #include "client.h"
 #include "dialog.h"
-
+#include "util-json.h"
 
 /* proxy -h host -p port --ci tcp/unix 127.0.0.1:9999 */
 
@@ -33,6 +34,9 @@ int main(int argc, char **argv)
         }
         //PxyLog_mode(LOG_MODE_SYSLOG);
     }
+    
+    //json_set_alloc_funcs(PxyMalloc, PxyFree);
+    
     if(loger_init(opts) != 0){
         exit(EXIT_FAILURE);
     }

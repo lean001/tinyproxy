@@ -4,8 +4,12 @@
 #include "util-lock.h"
 
 #include "util-log.h"
-#include  "util-mem.h"
+#include "util-mem.h"
+#include "util-json.h"
 
+#include "message.h"
+
+#include <assert.h>
 #include <event2/event.h>
 #include <event2/listener.h>
 #include <event2/bufferevent.h>
@@ -14,13 +18,23 @@
 #include <event2/thread.h>
 
 
+#define MSG_TYPE    "Type"
+#define MSG_METHOD  "Method"
+#define MSG_ID      "MsgId"
+
 #define SERVER_NAME "Server"
 #define SERVER_ID   "ID"
-#define SERVER_CAP  "Methods"
+#define SERVER_CAP  "Capabilitis"
 
 #define CAP_ID      "ID"
 #define CAP_DES     "Description"
 #define CAP_LEVEL   "Level"
+
+enum TYPE{
+    MSG_UNKNOWN = -1,
+    MSG_REQ,
+    MSG_RES
+};
 
 enum REG_STATE{
     NOT_REG = 0,
@@ -28,6 +42,10 @@ enum REG_STATE{
     REGISTERED,
     DEREGISTERED
 };
+
+static str MHD_INIT = {"INIT", 4};
+static str MHD_PING = {"PING", 4};
+static str MHD_OPT  = {"OPT", 3};
 
 typedef struct _capability{
     str id;
@@ -37,6 +55,7 @@ typedef struct _capability{
 }capability_t;
 
 struct _s_conn_ctx{
+    str init_id;
     str host;
     int port;
     int fd;
@@ -100,12 +119,58 @@ capability_t * s_capability_find(capability_t *capabilities, str id)
     return NULL;
 }
 
+static capability_t* s_capability_new()
+{
+    capability_t *c = NULL;
+    
+    c = PxyMalloc(sizeof(capability_t));
+    if(!c){
+        PxyLog(L_ERR, "Out of mem\n");
+        return NULL;
+    }
+    memset(c, 0, sizeof(capability_t));
+    return c;
+}
+
 static void s_capability_free(capability_t *c)
 {
     if(!c)return;
     if(c->id.s) PxyFree(c->id.s);
     if(c->description.s) PxyFree(c->description.s);
     PxyFree(c);
+}
+
+capability_t * s_capability_add(capability_t *c, json_t *node)
+{
+    capability_t *n = NULL;
+    if(!node) return NULL;
+    
+    n = s_capability_new();
+    if(!n) return NULL;
+    
+
+    if(json_get_str(node, &n->id, CAP_ID) != 0){
+        PxyLog(L_ERR, "The capability does not contain an ID!\n");
+        goto error;
+    }
+    
+    if(json_get_str(node, &n->description, CAP_DES) != 0){
+        PxyLog(L_ERR, "The capability does not contain a description!\n");
+        goto error;
+    }
+    
+    if(json_get_int(node, &n->level, CAP_LEVEL) != 0){
+        PxyLog(L_ERR, "The capability does not contain a level!\n");
+        goto error;
+    }
+    
+    if(c == NULL) c = n;
+    else n->next = c;
+    
+    return n;
+error:
+    s_capability_free(c);
+    return NULL;
 }
 
 static void s_capability_destroy(capability_t *s)
@@ -413,6 +478,7 @@ void s_conn_ctx_free(s_conn_ctx *ctx)
 {
     if(!ctx)return;
     
+    if(ctx->init_id.s) PxyFree(ctx->init_id.s);
     if(ctx->host.s) PxyFree(ctx->host.s);
     
     if (ctx->ev) {
@@ -427,52 +493,99 @@ void s_conn_ctx_free(s_conn_ctx *ctx)
 }
 
 
-int init_msg_parser(void *buf, size_t n, str *server, str *id, 
-                    capability_t *capabilities)
+int init_msg_parser(char *buf, size_t n, str *id, str *server, str *serverid, 
+                    capability_t **capabilities)
 {
     size_t size;
-    if(!buf || n = 0 || !name || !id || !capabilities) return -1;
+    int type = -1;
+    int err_code = 0;
+    json_error_t err;
+    capability_t *cpt;
+    str method = {NULL, 0};
     
-    json_t root = json_loads(buf, n);
-    if(!root) return -1;
+    if(!buf || n == 0 || !server || !serverid || !capabilities || !id) return -1;
     
-    json_t *name = NULL;
-    if((name = json_object_get(root, SERVER_NAME))){
-        size = json_object_size(name);
-        if(size > 0){
-            server->s = PxyMalloc(size + 1);
-            if(!server->s){
-                goto error;
-            }
-            server->len = snprintf(server->s, size, "%s", json_string_value(name));
-        }
+    json_t *root = json_loads(buf, 0, &err);
+    if(!root) {
+        PxyLog(L_WARN, "not json format: on line %d: %s\n", err.line, err.text);
+        return ERR_UNKNOWN_FORMAT;
     }
     
-    json_t *ID = NULL;
-    if((ID = json_object_get(root, SERVER_ID))){
-        size = json_object_size(ID);
-        if(size > 0){
-            id->s = PxyMalloc(size + 1);
-            if(!id->s){
-                goto error;
-            }
-            id->len = snprintf(id->s, size, "%s", json_string_value(ID));
-        }
+    if(json_get_int(root, &type, MSG_TYPE) != 0 || type != MSG_REQ){
+        PxyLog(L_WARN, "Init msg must be a require\n");
+        err_code = ERR_EXCEPT_TYPE;
+        goto error;
+    }
+    
+    if(json_get_str(root, id, MSG_ID) != 0){
+        PxyLog(L_ERR, "%s get json %s value failed\n", __func__, MSG_ID);
+        err_code = ERR_INFO_MISSED;
+        goto error;
+    }
+    
+    if(json_get_str(root, &method, MSG_METHOD) != 0){
+        PxyLog(L_ERR, "%s get json %s value failed\n", __func__, MSG_METHOD);
+        err_code = ERR_INFO_MISSED;
+        if(method.s)PxyFree(method.s);
+        err_code = ERR_INFO_MISSED;
+        goto error;
+    }
+    if(MHD_INIT.len != method.len || strncasecmp(method.s, MHD_INIT.s, method.len) != 0){
+        PxyLog(L_WARN, "must be register before method: %d %s\n", method.len, method.s);
+        PxyFree(method.s);
+        err_code = ERR_UNREGISTERED;
+        goto error;
+    }
+    
+    if(json_get_str(root, server, SERVER_NAME) != 0){
+        PxyLog(L_ERR, "%s get json %s value failed\n", __func__, SERVER_NAME);
+        err_code = ERR_INFO_MISSED;
+        goto error;
+    }
+    
+   if(json_get_str(root, serverid, SERVER_ID) != 0){
+        PxyLog(L_ERR, "%s get json %s value failed\n", __func__, SERVER_ID);
+        err_code = ERR_INFO_MISSED;
+        goto error;
     }
     
     json_t *cap = NULL;
+    json_t *child;
     if((cap = json_object_get(root, SERVER_CAP))){
-        assert( json_is_array(cap));
-        size = json_array_size(cap);
-        for(int i = 0; i < size; i++){
-            json_t *child = json_array_get(cap, i);
+        if(!json_is_array(cap)){
+            PxyLog(L_ERR, "%s get json %s value failed: not a array\n", __func__, SERVER_CAP);
+            return ERR_UNKNOWN_FORMAT;
+            goto error;
         }
+        size = json_array_size(cap);
+        int i;
+        cpt = NULL;
+        capability_t *tmp = NULL;
+        for(i = 0; i < size; i++){
+            if((child = json_array_get(cap, i))){
+                tmp = s_capability_add(cpt,child);
+                if(tmp){
+                    cpt = tmp;
+                }
+            }
+        }
+        if(!cpt){
+            PxyLog(L_ERR, "The message does not contain a capability\n");
+            err_code = ERR_INFO_MISSED;
+            goto error;
+        }
+        *capabilities = cpt;
     }
     
+    if(method.s)PxyFree(method.s);
+    return 0;
+    
 error:
-    if(root)
-        json_decref( root );
-    return -1;
+    if(server && server->s) PxyFree(server->s);
+    if(serverid && serverid->s) PxyFree(serverid->s);
+    if(root) json_decref(root);
+    
+    return err_code;
 }
 
 static void server_bev_eventcb(struct bufferevent *bev, short events, void *arg)
@@ -509,24 +622,37 @@ static void server_bev_readcb(struct bufferevent *bev, void *arg)
     
     size_t len = 0, size = 0;
     
-    //len = evbuffer_get_length(inbuf);
+    len = evbuffer_get_length(inbuf);
     
+    if(!ctx->marked) {
+        line = message_init_respond(&ctx->init_id);
+        if(line){
+            evbuffer_add_printf(outbuf, "%s", line);
+            PxyFree(line);
+            ctx->marked = 1;
+            return;
+        }
+    }
+    
+    #if 0
     while((line = evbuffer_readln(inbuf, &size, EVBUFFER_EOL_CRLF))){
         PxyLog(L_DBG, "%s\n", line);
         /*parser msg*/
-        server_msg_parse();
+        //server_msg_parse();
         len += size;
         PxyFree(line);
     }
+    #endif
     
     /* respond to server or not need to */
-    evbuffer_add_printf(outbuf, "recv %d bytes\r\n", len);
+    evbuffer_add_buffer(outbuf, inbuf);
+    //evbuffer_add_printf(outbuf, "%s: recv %d bytes\r\n");
     
 }
 
 static void server_bev_writecb(struct bufferevent *bev, void *arg)
 {
-    
+    return;
 }
 
 static struct bufferevent *
@@ -547,8 +673,8 @@ server_bufferevent_setup(s_conn_ctx *ctx)
 
 static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
 {
-    str servername, id;
-    capability_t capabilities;
+    str servername = {NULL, 0}, serverid = { NULL, 0}, msg_id = {NULL, 0};
+    capability_t *capabilities = NULL;
     
     s_conn_ctx *ctx = (s_conn_ctx *)arg;
     
@@ -572,12 +698,19 @@ static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
             return;
         }
         
-        PxyLog(L_DBG, "recv: %.*s\n", n, buf);
-        
-        res = init_msg_parser(buf, n, &servername, &id, &capabilities);
-        if(res == 1 && ctx->reg_retry < 10) {/*retry*/
+        PxyLog(L_DBG, "%s: recv: %.*s\n", __func__, n, buf);
+        buf[n] = '\0';
+        res = init_msg_parser((char *)buf, n, &msg_id, &servername, &serverid, &capabilities);
+        if(res != 0 && ctx->reg_retry < 10) {/*retry*/
             struct timeval delay = {0, 100};
-            event_free(ctx->ev);
+            
+            event_free(ctx->ev);/* must be free before respond to server */
+            msg_error_respond_fd(fd, res, &msg_id);
+            if(msg_id.s){
+                PxyFree(msg_id.s);
+                msg_id.s = NULL;
+                msg_id.len = 0;
+            }
             ctx->ev = event_new(ctx->evbase, fd, 0, server_fd_readcb, ctx);
             if(!ctx->ev){
                 PxyLog(L_ERR, "%s: event_new Out of memory\n", __func__);
@@ -593,9 +726,9 @@ static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
         ctx->ev = NULL;
     }
     /*get server info*/
-    s_contact *c = s_contact_update_connctx(ctx, &servername, &id, REGISTERED, &capabilities);
+    s_contact *c = s_contact_update_connctx(ctx, &servername, &serverid, REGISTERED, capabilities);
     if(c){
-        ctx->marked = 1;
+        ctx->init_id = msg_id;
         ctx->contact = c;
         ctx->bev = server_bufferevent_setup(ctx);
         s_unlock(c->hash); 

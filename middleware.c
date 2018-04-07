@@ -39,10 +39,10 @@
 #include <string.h>
 #include <errno.h>
 
+#include <event2/thread.h>
 #include <event2/event.h>
 #include <event2/bufferevent.h>
 #include <event2/buffer.h>
-#include <event2/thread.h>
 #include <event2/listener.h>
 
 
@@ -164,15 +164,14 @@ middleware_signal_cb(evutil_socket_t fd, short what, void *arg)
  * Socket clisock is the privsep client socket used for binding to ports.
  * Returns ctx on success, or NULL on error.
  */
-middleware_ctx *
-middleware_new(opts_t *opts)
+middleware_ctx * middleware_new(opts_t *opts)
 {
     middleware_ctx *ctx;
     int rc;
     size_t i;
 
     /* adds locking, only required if accessed from separate threads */
-    evthread_use_pthreads();
+    //evthread_use_pthreads();
 
     #ifndef PURIFY
     if (OPTS_DEBUG(opts)) {

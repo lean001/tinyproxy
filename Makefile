@@ -1,6 +1,6 @@
 
 CC = gcc -g -O0
-LDFLAGS = -levent
+LDFLAGS = -levent -ljansson
 INSTALLDIR = /usr/local/lib
 INCLUDEDIR = /usr/local/include
 
@@ -13,8 +13,9 @@ dialog.o \
 middleware.o \
 opts.o \
 server.o \
+message.o \
 util-log.o \
-util-mem.o
+util-json.o
 
 SOURCES = client.c client.h \
 common.c common.h \
@@ -23,9 +24,11 @@ main.c \
 middleware.c middleware.h \
 opts.c opts.h \
 server.c server.h \
+message.c message.h \
 util-log.c util-log.h \
-util-mem.c util-mem.h \
+util-mem.h \
 util-str.h util-lock.h \
+util-json.c util-json.h \
 main.c
 
 
