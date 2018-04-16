@@ -1,5 +1,6 @@
 #program
 tinyproxy
+core.*
 
 # Prerequisites
 *.d

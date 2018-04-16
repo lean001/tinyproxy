@@ -1,5 +1,5 @@
 
-CC = gcc -g -O0
+CC = gcc -g -O0 -W
 LDFLAGS = -levent -ljansson
 INSTALLDIR = /usr/local/lib
 INCLUDEDIR = /usr/local/include

@@ -17,25 +17,6 @@
 #include <event2/buffer.h>
 #include <event2/thread.h>
 
-
-#define MSG_TYPE    "Type"
-#define MSG_METHOD  "Method"
-#define MSG_ID      "MsgId"
-
-#define SERVER_NAME "Server"
-#define SERVER_ID   "ID"
-#define SERVER_CAP  "Capabilitis"
-
-#define CAP_ID      "ID"
-#define CAP_DES     "Description"
-#define CAP_LEVEL   "Level"
-
-enum TYPE{
-    MSG_UNKNOWN = -1,
-    MSG_REQ,
-    MSG_RES
-};
-
 enum REG_STATE{
     NOT_REG = 0,
     REG_PENDING,
@@ -43,9 +24,9 @@ enum REG_STATE{
     DEREGISTERED
 };
 
-static str MHD_INIT = {"INIT", 4};
-static str MHD_PING = {"PING", 4};
-static str MHD_OPT  = {"OPT", 3};
+static str MHD_INIT_str = {"INIT", 4};
+static str MHD_PING_str = {"PING", 4};
+static str MHD_OPT_str  = {"OPT", 3};
 
 typedef struct _capability{
     str id;
@@ -210,7 +191,7 @@ int s_contact_table_init(int size)
 
 void s_contact_table_destroy()
 {
-    unsigned int i;
+    int i;
     s_contact *c, *nc;
     
     if(!s_contact_table)return;
@@ -508,6 +489,7 @@ int init_msg_parser(char *buf, size_t n, str *id, str *server, str *serverid,
     json_t *root = json_loads(buf, 0, &err);
     if(!root) {
         PxyLog(L_WARN, "not json format: on line %d: %s\n", err.line, err.text);
+        PxyLog(L_WARN, "%.*s\n", n, buf);
         return ERR_UNKNOWN_FORMAT;
     }
     
@@ -530,7 +512,7 @@ int init_msg_parser(char *buf, size_t n, str *id, str *server, str *serverid,
         err_code = ERR_INFO_MISSED;
         goto error;
     }
-    if(MHD_INIT.len != method.len || strncasecmp(method.s, MHD_INIT.s, method.len) != 0){
+    if(MHD_INIT_str.len != method.len || strncasecmp(method.s, MHD_INIT_str.s, method.len) != 0){
         PxyLog(L_WARN, "must be register before method: %d %s\n", method.len, method.s);
         PxyFree(method.s);
         err_code = ERR_UNREGISTERED;
@@ -558,7 +540,7 @@ int init_msg_parser(char *buf, size_t n, str *id, str *server, str *serverid,
             goto error;
         }
         size = json_array_size(cap);
-        int i;
+        unsigned int i;
         cpt = NULL;
         capability_t *tmp = NULL;
         for(i = 0; i < size; i++){
@@ -592,7 +574,7 @@ static void server_bev_eventcb(struct bufferevent *bev, short events, void *arg)
 {
     s_conn_ctx *ctx = (s_conn_ctx *)arg;
     
-    PxyLog(L_DBG, "%s: %s%s%s%s\n", __func__,  
+    PxyLog(L_DBG, "%s%s%s%s\n",   
                 events & BEV_EVENT_CONNECTED ? "connected" : "",
                 events & BEV_EVENT_ERROR ? "error" : "",
                 events & BEV_EVENT_TIMEOUT ? "timeout" : "",
@@ -614,27 +596,45 @@ static void server_bev_eventcb(struct bufferevent *bev, short events, void *arg)
 
 static void server_bev_readcb(struct bufferevent *bev, void *arg)
 {
+    char res_buf[MAX_MSG_LEN] = {0};
     char *line = NULL;
     s_conn_ctx *ctx = (s_conn_ctx *)arg;
     
     struct evbuffer *inbuf = bufferevent_get_input(bev);
     struct evbuffer *outbuf = bufferevent_get_output(bev);
     
-    size_t len = 0, size = 0;
+    unsigned int len = 0, inbuf_len = 0;
     
-    len = evbuffer_get_length(inbuf);
+    inbuf_len = evbuffer_get_length(inbuf);
+    if(inbuf_len == 0) return;
     
-    if(!ctx->marked) {
-        line = message_init_respond(&ctx->init_id);
-        if(line){
-            evbuffer_add_printf(outbuf, "%s", line);
-            PxyFree(line);
-            ctx->marked = 1;
-            return;
-        }
+    if(!ctx->marked && 
+        message_init_respond(&ctx->init_id, res_buf, (int *)&len) == 0) {
+        evbuffer_add_printf(outbuf, "%.*s", len, res_buf);
+        line = NULL;
+        ctx->marked = 1;
+        evbuffer_drain(inbuf, inbuf_len);
+        return;
     }
     
-    #if 0
+
+    /* TODO: 
+    evbuffer_copyout(buf, &record_len, 4); 
+    record_len = ntohl(record_len);
+    if(record_len < len)return;
+    line = PxyMalloc(record_len);
+    */
+    line = PxyMalloc(inbuf_len);
+    if(NULL == line) return;
+    evbuffer_remove(inbuf, line, inbuf_len);
+    line[inbuf_len] = '\0';
+    if(message_parser(line, inbuf_len, res_buf, &len) == 0 && len != 0){
+        evbuffer_add(outbuf, res_buf, len);
+    }
+    PxyFree(line);
+    return;
+    
+#if 0
     while((line = evbuffer_readln(inbuf, &size, EVBUFFER_EOL_CRLF))){
         PxyLog(L_DBG, "%s\n", line);
         /*parser msg*/
@@ -642,12 +642,11 @@ static void server_bev_readcb(struct bufferevent *bev, void *arg)
         len += size;
         PxyFree(line);
     }
-    #endif
+#endif
+    
     
     /* respond to server or not need to */
-    evbuffer_add_buffer(outbuf, inbuf);
-    //evbuffer_add_printf(outbuf, "%s: recv %d bytes\r\n");
-    
+    //evbuffer_add_buffer(outbuf, inbuf);
 }
 
 static void server_bev_writecb(struct bufferevent *bev, void *arg)
@@ -671,6 +670,21 @@ server_bufferevent_setup(s_conn_ctx *ctx)
     return bev;
 }
 
+static void server_bev_heartbeatcb(evutil_socket_t fd, short what, void *arg)
+{
+    char buffer[MAX_MSG_LEN];
+    unsigned int len = 0;
+    
+    s_conn_ctx *ctx = (s_conn_ctx *)arg;
+    
+    if (what & EV_TIMEOUT && ctx && ctx->bev) {
+        struct evbuffer *outbuf = bufferevent_get_output(ctx->bev);
+        if(outbuf && message_ping(MSG_REQ, NULL, buffer, &len) == 0 && len != 0){
+            evbuffer_add(outbuf, buffer, len);
+        }
+    }
+}
+
 static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
 {
     str servername = {NULL, 0}, serverid = { NULL, 0}, msg_id = {NULL, 0};
@@ -679,7 +693,7 @@ static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
     s_conn_ctx *ctx = (s_conn_ctx *)arg;
     
     if(!ctx->marked){
-        char buf[1024];
+        char buf[MAX_MSG_LEN];
         ssize_t n;
         int res;
         unsigned int complete;
@@ -698,14 +712,16 @@ static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
             return;
         }
         
-        PxyLog(L_DBG, "%s: recv: %.*s\n", __func__, n, buf);
+        PxyLog(L_DBG, "recv: %.*s\n", n, buf);
         buf[n] = '\0';
         res = init_msg_parser((char *)buf, n, &msg_id, &servername, &serverid, &capabilities);
         if(res != 0 && ctx->reg_retry < 10) {/*retry*/
             struct timeval delay = {0, 100};
             
             event_free(ctx->ev);/* must be free before respond to server */
-            msg_error_respond_fd(fd, res, &msg_id);
+            if(message_error(res, &msg_id, buf, (int *)&n) == 0){
+                message_sender(fd, buf, n);
+            }
             if(msg_id.s){
                 PxyFree(msg_id.s);
                 msg_id.s = NULL;
@@ -732,6 +748,11 @@ static void server_fd_readcb(evutil_socket_t fd, short what, void *arg)
         ctx->contact = c;
         ctx->bev = server_bufferevent_setup(ctx);
         s_unlock(c->hash); 
+        /* add ping timer */
+        if(ctx->ev)event_free(ctx->ev);
+        ctx->ev = event_new(ctx->evbase, fd, EV_TIMEOUT|EV_PERSIST, server_bev_heartbeatcb, ctx);
+        struct timeval delay = {3, 500};
+        event_add(ctx->ev, &delay);
         return;
     }
     /*It can't be here! */

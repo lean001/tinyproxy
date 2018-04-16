@@ -15,7 +15,7 @@
 #define L_DBG    4
 #define L_MEM    5
 
-#define PxyLog(lev, ...) fprintf(stderr, __VA_ARGS__)
+#define PxyLog(lev, fmt, ...) fprintf(stderr, "%s():%d "fmt"\n", __func__, __LINE__, ## __VA_ARGS__)
 
 
 int loger_init(opts_t*);

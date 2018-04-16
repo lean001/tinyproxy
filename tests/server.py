@@ -3,6 +3,7 @@
 
 import json
 import asyncio
+from datetime import datetime
 
 MSG_MAX_LEN = 1024
 
@@ -110,9 +111,12 @@ class MsgRespond(object):
         try:
             if input['Type'] == 0:
                 if self.method == METHOD_PING:
-                    self.msg = msg_encode(PONG_MSG)
+                    PingData = PONG_MSG
+                    PingData['MsgId'] = input['MsgId']
+                    self.msg = msg_encode(PingData)
                 if self.method == METHOD_OPT:
                     pass
+                self.state = 0
             else: #respond
                 if self.method == METHOD_INIT:
                     if input['State'] == 'true':
@@ -142,7 +146,7 @@ async def msg_handler(host=None, port=None, loop=None):
                 print("init")
                 
             data = await reader.read(MSG_MAX_LEN)
-            print("recv msg: %r"%data)
+            print(str(datetime.now()), " recv msg: %r"%data)
             if len(data) == 0 or data == b'recv 0 bytes\r\n':
                 break
                 
